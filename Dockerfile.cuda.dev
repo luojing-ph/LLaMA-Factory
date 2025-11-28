@@ -1,0 +1,85 @@
+# LLaMA-Factory/Dockerfile.cuda.dev
+# Mostly mirrors docker/docker-cuda/Dockerfile, but:
+#   - BASE_IMAGE default is nvcr.io/nvidia/pytorch:25.06-py3
+#   - Ports are the standard 7860 / 8000
+#   - Intended for local dev with docker-compose.cuda.dev.yml
+
+# Base image (can be overridden at build time)
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.06-py3
+FROM ${BASE_IMAGE}
+
+# ---------- Build args ----------
+
+# Pip index for Python packages
+ARG PIP_INDEX=https://pypi.org/simple
+# Extras passed to `pip install -e ".[EXTRAS]"`
+ARG EXTRAS=metrics
+# Whether to rebuild flash-attn from source
+ARG INSTALL_FLASHATTN=false
+# Optional HTTP proxy
+ARG HTTP_PROXY=""
+
+# ---------- Environment ----------
+
+ENV MAX_JOBS=16 \
+    FLASH_ATTENTION_FORCE_BUILD=TRUE \
+    VLLM_WORKER_MULTIPROC_METHOD=spawn \
+    DEBIAN_FRONTEND=noninteractive \
+    NODE_OPTIONS="" \
+    PIP_ROOT_USER_ACTION=ignore \
+    http_proxy="${HTTP_PROXY}" \
+    https_proxy="${HTTP_PROXY}"
+
+# Use Bash instead of /bin/sh
+SHELL ["/bin/bash", "-c"]
+
+# Work inside /app like the official image
+WORKDIR /app
+
+# ---------- Python / pip setup ----------
+
+# Configure pip index and upgrade basic tooling
+RUN pip config set global.index-url "${PIP_INDEX}" && \
+    pip config set global.extra-index-url "${PIP_INDEX}" && \
+    pip install --no-cache-dir --upgrade pip packaging wheel setuptools
+
+# Install Python requirements
+COPY requirements.txt /app
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the rest of the project
+COPY . /app
+
+# Install LLaMA-Factory in editable mode with extras
+RUN pip install --no-cache-dir -e ".[${EXTRAS}]" --no-build-isolation
+
+# Optionally rebuild flash-attn
+RUN if [ "${INSTALL_FLASHATTN}" == "true" ]; then \
+        pip uninstall -y ninja && \
+        pip install --no-cache-dir ninja && \
+        pip install --no-cache-dir flash-attn --no-build-isolation; \
+    fi
+
+# Volumes (compose will actually mount these; kept here for documentation)
+# VOLUME [ "/root/.cache/huggingface", "/app/shared_data", "/app/output" ]
+
+# ---------- Ports ----------
+
+# 7860: LLaMA Board (Gradio)
+ENV GRADIO_SERVER_PORT=7860
+EXPOSE 7860
+
+# 8000: API service
+ENV API_PORT=8000
+EXPOSE 8000
+
+# Clear proxy before final image
+ENV http_proxy=
+ENV https_proxy=
+
+# Reset pip config so image doesn’t hard-code your local mirror
+RUN pip config unset global.index-url || true && \
+    pip config unset global.extra-index-url || true
+
+# Default to an interactive shell; compose can override with `llamafactory-cli webui`
+CMD ["bash"]

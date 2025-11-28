@@ -1,0 +1,68 @@
+# LLaMA-Factory/docker-compose.cuda.dev.yml
+# Dev compose file using Dockerfile.cuda.dev and bind-mounting the repo.
+
+# How to use:
+# 1. Build the dev image
+# docker compose -f docker-compose.cuda.dev.yml build
+
+# 2. Start the container
+# docker compose -f docker-compose.cuda.dev.yml up -d
+
+# 3. Get a shell inside
+# docker compose -f docker-compose.cuda.dev.yml exec llamafactory-dev bash
+
+
+services:
+  llamafactory-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda.dev
+      args:
+        # You can tweak these when building if needed
+        PIP_INDEX: https://pypi.org/simple
+        EXTRAS: metrics
+        INSTALL_FLASHATTN: "false"
+        # BASE_IMAGE can be overridden here if you ever want to change it
+        BASE_IMAGE: nvcr.io/nvidia/pytorch:25.06-py3
+
+    image: llamafactory-dev:latest
+    container_name: llamafactory-dev
+
+    # GPU access (similar intent to the official compose)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ["gpu"]
+
+    ipc: host
+    shm_size: "16g"
+
+    # --- Volumes for local dev ---
+    # This is the important part for **editing code on the host**:
+    # your host repo is mounted into /app, which is also the WORKDIR.
+    volumes:
+      # Whole repo -> /app (so editing on host updates inside container)
+      - .:/app
+      # Optional caches/data/output (feel free to adjust paths)
+      - ./hf_cache:/root/.cache/huggingface
+      - ./ms_cache:/root/.cache/modelscope
+      - ./om_cache:/root/.cache/openmind
+      - ./data:/app/data
+      - ./output:/app/output
+
+    # WebUI + API ports
+    ports:
+      - "7860:7860"
+      - "8000:8000"
+
+    working_dir: /app
+    tty: true
+    stdin_open: true
+
+    # For dev: drop into shell. You can change this to
+    #   command: ["llamafactory-cli", "webui"]
+    # if you want it to auto-launch the GUI.
+    command: ["bash"]
